@@ -17,29 +17,22 @@ Planification des rendez-vous (planning des rendez-vous avec disponibilité des 
 ## Installation : 
 
 -Cloner le projet : 
-
 git clone https://github.com/Mathilde4/super_wash_car.git
-
 cd super_wash_car
 
 -Créer un environnement virtuel(Optionnel mais recommandé) :
-
 python -m venv env
 
 Sur Windows : env\Scripts\activate.bat
 
 -Installation : 
-
 pip install django
 
 -Création du projet :
-
 django-admin startproject nomduprojet
-
 cd super_wash_car
 
 -Création de l'app
-
 py manage.py startapp nomApp
 
 ---
