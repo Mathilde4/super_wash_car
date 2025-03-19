@@ -43,8 +43,9 @@ Authentification :  JWT
 ---
 
 ## Auteur : 
-👨‍💻 Mathilde
-👨‍💻 Laura (okook659)
+
+👨‍💻 Mathilde & Laura (okook659)
+
 📧 Contact : mathibassadou@gmail.com, Laura.maete2006@gmail.com
 
 
