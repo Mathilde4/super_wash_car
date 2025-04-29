@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from rest_framework import viewsets, status
-from .models import Client, Service, RendezVous, Tarification
+from .models import Client, Service, RendezVous, Tarification,UserProfile
 from .serializers import ClientSerializer, ServiceSerializer, RendezVousSerializer, TarificationSerializer
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -21,8 +21,37 @@ from rest_framework.decorators import api_view
 from django.db.models import Sum, Count
 from django.utils.timezone import now
 from rest_framework.response import Response
+from django.contrib.auth.models import User
+from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.authtoken.models import Token
+from rest_framework.exceptions import ValidationError
+from django.contrib.auth import authenticate
+from .serializers import UserRegisterSerializer
+from django.shortcuts import get_object_or_404
+from rest_framework import viewsets, status
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from django.utils import timezone
+from datetime import datetime, timedelta
+from django.contrib.auth import authenticate
+from rest_framework.authtoken.models import Token
+from rest_framework.exceptions import ValidationError
 
-# Enregistrement d'un utilisateur (REGISTER)
+from .models import Client, Service, RendezVous, Tarification, UserProfile
+from .serializers import (
+    ClientSerializer,  
+    RendezVousSerializer, 
+    TarificationSerializer, 
+    UserRegisterSerializer
+)
+
+# --------------------------
+# Authentification
+# --------------------------
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register(request):
@@ -30,111 +59,165 @@ def register(request):
     if serializer.is_valid():
         user = serializer.save()
         token, created = Token.objects.get_or_create(user=user)
+        
+        # Création du profil client automatiquement (sécurisé)
+        profile, created = UserProfile.objects.get_or_create(user=user, defaults={'role': 'client'})
+
         return Response({
             'user': {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
+                'role': profile.role,
             },
             'token': token.key,
         }, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Connexion d'un utilisateur (LOGIN)
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
     username = request.data.get('username')
     password = request.data.get('password')
-
     user = authenticate(username=username, password=password)
 
     if user is not None:
         token, created = Token.objects.get_or_create(user=user)
+        profile = UserProfile.objects.get(user=user)
         return Response({
             'user': {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
+                'role': profile.role,
             },
             'token': token.key,
         }, status=status.HTTP_200_OK)
     else:
         return Response({'error': 'Nom d\'utilisateur ou mot de passe incorrect'}, status=status.HTTP_400_BAD_REQUEST)
-            
-# pour le client
+
+# --------------------------
+# VueSet Client
+# --------------------------
+
 class ClientViewSet(viewsets.ModelViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
 
-    # historique des rendez-vous
     @action(detail=True, methods=['GET'])
     def historique(self, request, pk=None):
         client = self.get_object()
-        rendezvous = RendezVous.objects.filter(client=client)
+        rdvs = RendezVous.objects.filter(client=client)
         data = [
             {
                 'service': rdv.service.nom,
                 'date': rdv.date,
-                'prix': rdv.tarification.prix if rdv.tarification else None
-            } for rdv in rendezvous
+                'prix': rdv.tarification.prix if rdv.tarification else None,
+                'etat': rdv.status,
+            } for rdv in rdvs
         ]
         return Response(data)
 
-    # lister les 5 clients les plus fidèles
     @action(detail=False, methods=['GET'])
     def top_fideles(self, request):
         top_clients = Client.objects.order_by('-points_fidelite')[:5]
-
         data = [
             {
-                'nom': client.nom,
-                'points_fidelite': client.points_fidelite
+                'nom': c.nom,
+                'points_fidelite': c.points_fidelite
             }
-            for client in top_clients
+            for c in top_clients
         ]
         return Response(data)
 
+# --------------------------
+# VueSet Service
+# --------------------------
 
-# pour le service
 class ServiceViewSet(viewsets.ModelViewSet):
-    queryset = Service.objects.all() 
+    queryset = Service.objects.all()
     serializer_class = ServiceSerializer
 
+# --------------------------
+# VueSet Tarification
+# --------------------------
 
-
-# pour les tarifs
 class TarificationViewSet(viewsets.ModelViewSet):
     queryset = Tarification.objects.all()
     serializer_class = TarificationSerializer
 
+# --------------------------
+# VueSet RendezVous (réservations)
+# --------------------------
 
-# pour le rendez-vous
 class RendezVousViewSet(viewsets.ModelViewSet):
     queryset = RendezVous.objects.all()
     serializer_class = RendezVousSerializer
+    permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        # Récupérer les données envoyées dans le POST
-        service = serializer.validated_data['service']
-        client = serializer.validated_data['client']
-        type_vehicule = serializer.validated_data['type_vehicule']  # Le type de véhicule est maintenant un champ du rendez-vous
+        # Le client connecté réserve
+        profile = UserProfile.objects.get(user=self.request.user)
+        if profile.role != 'client':
+            raise ValidationError("Seuls les clients peuvent réserver.")
 
-        # Obtenir la tarification basée sur le service et le type de véhicule
+        # Trouver le client lié à ce profil
+        client = get_object_or_404(Client, user=self.request.user)
+
+        service = serializer.validated_data['service']
+        type_vehicule = serializer.validated_data['type_vehicule']
+
+        # Cherche la tarification
         try:
             tarification = Tarification.objects.get(service=service, type_vehicule=type_vehicule)
         except Tarification.DoesNotExist:
-            raise ValidationError(f"Aucune tarification définie pour le service '{service.nom}' et le type de véhicule '{type_vehicule}'.")
+            raise ValidationError("Tarification indisponible pour ce service et type de véhicule.")
 
-        # Enregistrer le rendez-vous avec la tarification
-        rendezvous = serializer.save(tarification=tarification)
+        serializer.save(client=client, tarification=tarification, status="en attente")
+
+    # Liste des réservations en attente pour l'admin
+    @action(detail=False, methods=['GET'])
+    def en_attente(self, request):
+        profile = UserProfile.objects.get(user=request.user)
+        if profile.role != 'admin':
+            return Response({'error': 'Accès réservé à l\'administrateur'}, status=status.HTTP_403_FORBIDDEN)
+        
+        rdvs = RendezVous.objects.filter(laveur__isnull=True)
+        serializer = self.get_serializer(rdvs, many=True)
+        return Response(serializer.data)
+
+    # Admin assigne un laveur
+    @action(detail=True, methods=['POST'])
+    def assigner_laveur(self, request, pk=None):
+        rendezvous = self.get_object()
+        laveur_id = request.data.get('laveur_id')
+
+        laveur_profile = get_object_or_404(UserProfile, id=laveur_id, role='laveur')
+        rendezvous.laveur = laveur_profile.user
+        rendezvous.status = 'assigné'
+        rendezvous.save()
+
+        return Response({'message': 'Laveur assigné avec succès.'})
+
+    # Le laveur termine un service
+    @action(detail=True, methods=['POST'])
+    def terminer(self, request, pk=None):
+        rendezvous = self.get_object()
+        profile = UserProfile.objects.get(user=request.user)
+
+        if profile.role != 'laveur' or rendezvous.laveur != request.user:
+            return Response({'error': 'Vous n\'êtes pas autorisé à terminer ce service.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        rendezvous.status = 'terminé'
+        rendezvous.save()
 
         # Ajouter des points de fidélité au client
-        client.points_fidelite += 10
-        client.save()
+        rendezvous.client.points_fidelite += 10
+        rendezvous.client.save()
 
+        return Response({'message': 'Service terminé. Points fidélité ajoutés.'})
 
-    # les créneaux disponibles
+    # Les créneaux disponibles
     @action(detail=False, methods=['GET'])
     def disponibilites(self, request):
         date_str = request.query_params.get('date')
@@ -160,28 +243,6 @@ class RendezVousViewSet(viewsets.ModelViewSet):
             'creneaux_disponibles': creneaux_disponibles
         })
 
-    # pour lister tous les créneaux pris
-    @action(detail=False, methods=['GET'])
-    def creneaux_pris(self, request):
-        rendezvous = RendezVous.objects.order_by('date')
-
-        creneaux_par_date = {}
-
-        for rdv in rendezvous:
-            date_str = rdv.date.date().isoformat()
-            heure = rdv.date.strftime('%H:%M')
-
-            if date_str not in creneaux_par_date:
-                creneaux_par_date[date_str] = []
-
-            creneaux_par_date[date_str].append({
-                'heure': heure,
-                'client': rdv.client.nom,
-                'service': rdv.service.nom,
-                'prix': rdv.tarification.prix if rdv.tarification else None
-            })
-
-        return Response(creneaux_par_date)
     
 @api_view(['GET'])
 def total_clients(request):

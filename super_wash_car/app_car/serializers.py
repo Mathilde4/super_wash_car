@@ -1,8 +1,19 @@
 from rest_framework import serializers
-from .models import Client, Service, RendezVous, Tarification
+from .models import Client, Service, RendezVous, Tarification,UserProfile
 from django.contrib.auth.models import User
 
 
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = ['user', 'role']
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('user')
+        user = User.objects.create(**user_data)
+        user_profile = UserProfile.objects.create(user=user, **validated_data)
+        return user_profile
 
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -18,6 +29,10 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         )
         user.set_password(validated_data['password'])
         user.save()
+
+        # Assigner un rôle par défaut de 'client' lors de la création d'un utilisateur
+        user_profile = UserProfile.objects.create(user=user, role='client')
+        
         return user
         
 # Serializer pour les clients
