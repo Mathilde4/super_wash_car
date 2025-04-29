@@ -17,6 +17,10 @@ from rest_framework import status
 from django.contrib.auth import authenticate
 from .serializers import UserRegisterSerializer
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view
+from django.db.models import Sum, Count
+from django.utils.timezone import now
+from rest_framework.response import Response
 
 # Enregistrement d'un utilisateur (REGISTER)
 @api_view(['POST'])
@@ -178,3 +182,59 @@ class RendezVousViewSet(viewsets.ModelViewSet):
             })
 
         return Response(creneaux_par_date)
+    
+@api_view(['GET'])
+def total_clients(request):
+    total = Client.objects.count()
+    return Response({'total_clients': total})
+
+@api_view(['GET'])
+def total_rendezvous(request):
+    total = RendezVous.objects.count()
+    return Response({'total_rendezvous': total})
+
+@api_view(['GET'])
+def rendezvous_aujourdhui(request):
+    today = now().date()
+    count = RendezVous.objects.filter(date__date=today).count()
+    return Response({'rendezvous_aujourdhui': count})
+
+@api_view(['GET'])
+def top_services(request):
+    services = Service.objects.annotate(nb_rendezvous=Count('rendezvous')).order_by('-nb_rendezvous')[:5]
+    data = [
+        {
+            'service': service.nom,
+            'nombre_rendezvous': service.nb_rendezvous
+        }
+        for service in services
+    ]
+    return Response(data)
+
+@api_view(['GET'])
+def revenus_par_service(request):
+    revenus = Tarification.objects.values('service__nom').annotate(total=Sum('prix')).order_by('-total')
+    return Response(revenus)
+
+@api_view(['GET'])
+def revenus_totaux(request):
+    total = RendezVous.objects.aggregate(total_revenu=Sum('tarification__prix'))
+    return Response({'revenus_totaux': total['total_revenu']})
+
+@api_view(['GET'])
+def top_clients(request):
+    clients = Client.objects.order_by('-points_fidelite')[:5]
+    data = [
+        {
+            'nom': client.nom,
+            'points_fidelite': client.points_fidelite
+        }
+        for client in clients
+    ]
+    return Response(data)
+
+@api_view(['GET'])
+def clients_fideles(request):
+    seuil = int(request.query_params.get('seuil', 100)) 
+    count = Client.objects.filter(points_fidelite__gte=seuil).count()
+    return Response({'clients_fideles': count})
