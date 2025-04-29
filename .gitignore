@@ -1,3 +1,4 @@
 env/
 env
 * text=auto
+__pycache__
