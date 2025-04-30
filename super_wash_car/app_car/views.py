@@ -1,8 +1,7 @@
 from django.shortcuts import render
-from rest_framework import viewsets, status
-from .models import Client, Service, RendezVous, Tarification
-from .serializers import ClientSerializer, ServiceSerializer, RendezVousSerializer, TarificationSerializer
-from rest_framework.response import Response
+from rest_framework import viewsets, status, generics
+from .models import Client, Service, RendezVous, Tarification,UserProfile
+from .serializers import ClientSerializer, ServiceSerializer, RendezVousSerializer, TarificationSerializer, UserRegisterSerializer
 from rest_framework.decorators import action
 from django.db.models import F
 from django.utils import timezone
@@ -15,32 +14,43 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate
-from .serializers import UserRegisterSerializer
-from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
 from django.db.models import Sum, Count
 from django.utils.timezone import now
-from rest_framework.response import Response
+from rest_framework.permissions import IsAdminUser
+from rest_framework.views import APIView
+from django.contrib.auth.models import User
+from rest_framework.exceptions import ValidationError
 
-# Enregistrement d'un utilisateur (REGISTER)
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register(request):
     serializer = UserRegisterSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+
+        role = request.data.get('role', 'client')  # Rôle par défaut : client
+        profile = UserProfile.objects.create(user=user, role=role)
+
+        if role == 'client':
+            Client.objects.create(user=user)  # Crée aussi le client
+
         token, created = Token.objects.get_or_create(user=user)
         return Response({
             'user': {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
+                'role': role,
             },
             'token': token.key,
         }, status=status.HTTP_201_CREATED)
+    
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-# Connexion d'un utilisateur (LOGIN)
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
@@ -51,35 +61,71 @@ def login_view(request):
 
     if user is not None:
         token, created = Token.objects.get_or_create(user=user)
+        role = UserProfile.objects.get(user=user).role  
         return Response({
             'user': {
                 'id': user.id,
                 'username': user.username,
                 'email': user.email,
+                'role': role,
             },
             'token': token.key,
         }, status=status.HTTP_200_OK)
     else:
         return Response({'error': 'Nom d\'utilisateur ou mot de passe incorrect'}, status=status.HTTP_400_BAD_REQUEST)
             
-# pour le client
+
+
+class CreateLaveurView(APIView):
+
+
+    def post(self, request):
+        username = request.data.get('username')
+        email = request.data.get('email', '')
+        password = request.data.get('password')
+
+        if not username or not password:
+            return Response({'error': 'username et password sont requis'}, status=400)
+
+        user = User(username=username, email=email)
+        user.set_password(password)
+        user.save()
+
+        UserProfile.objects.create(user=user, role='laveur')  # Attribue le rôle "laveur"
+
+        return Response({'message': 'Laveur créé avec succès'})
+    
+@api_view(['GET'])
+
+def liste_laveurs(request):
+    laveurs = UserProfile.objects.filter(role='laveur').select_related('user')
+    data = [
+        {
+            'id': laveur.user.id,
+            'username': laveur.user.username,
+            'email': laveur.user.email
+        }
+        for laveur in laveurs
+    ]
+    return Response(data)
+
 class ClientViewSet(viewsets.ModelViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
 
     # historique des rendez-vous
-    @action(detail=True, methods=['GET'])
-    def historique(self, request, pk=None):
-        client = self.get_object()
-        rendezvous = RendezVous.objects.filter(client=client)
-        data = [
-            {
-                'service': rdv.service.nom,
-                'date': rdv.date,
-                'prix': rdv.tarification.prix if rdv.tarification else None
-            } for rdv in rendezvous
-        ]
-        return Response(data)
+    # @action(detail=True, methods=['GET'])
+    # def historique(self, request, pk=None):
+    #     client = self.get_object()
+    #     rendezvous = RendezVous.objects.filter(client=client)
+    #     data = [
+    #         {
+    #             'service': rdv.service.nom,
+    #             'date': rdv.date,
+    #             'prix': rdv.tarification.prix if rdv.tarification else None
+    #         } for rdv in rendezvous
+    #     ]
+    #     return Response(data)
 
     # lister les 5 clients les plus fidèles
     @action(detail=False, methods=['GET'])
@@ -114,24 +160,33 @@ class RendezVousViewSet(viewsets.ModelViewSet):
     queryset = RendezVous.objects.all()
     serializer_class = RendezVousSerializer
 
-    def perform_create(self, serializer):
-        # Récupérer les données envoyées dans le POST
-        service = serializer.validated_data['service']
-        client = serializer.validated_data['client']
-        type_vehicule = serializer.validated_data['type_vehicule']  # Le type de véhicule est maintenant un champ du rendez-vous
 
-        # Obtenir la tarification basée sur le service et le type de véhicule
+    def perform_create(self, serializer):
+        user = self.request.user
+
+        if not user.is_authenticated:
+            raise ValidationError("Utilisateur non authentifié.")
+
+        try:
+            client = Client.objects.get(user=user)
+        except Client.DoesNotExist:
+            raise ValidationError("Client non trouvé pour cet utilisateur.")
+
+        service = serializer.validated_data['service']
+        type_vehicule = serializer.validated_data['type_vehicule']
+
         try:
             tarification = Tarification.objects.get(service=service, type_vehicule=type_vehicule)
         except Tarification.DoesNotExist:
             raise ValidationError(f"Aucune tarification définie pour le service '{service.nom}' et le type de véhicule '{type_vehicule}'.")
 
-        # Enregistrer le rendez-vous avec la tarification
-        rendezvous = serializer.save(tarification=tarification)
+        # Création du rendez-vous avec le client connecté
+        rendezvous = serializer.save(client=client, tarification=tarification, status='en_attente')
 
-        # Ajouter des points de fidélité au client
+        # Ajout des points fidélité
         client.points_fidelite += 10
         client.save()
+
 
 
     # les créneaux disponibles
@@ -238,3 +293,42 @@ def clients_fideles(request):
     seuil = int(request.query_params.get('seuil', 100)) 
     count = Client.objects.filter(points_fidelite__gte=seuil).count()
     return Response({'clients_fideles': count})
+
+class AssignLaveurView(APIView):
+
+    def post(self, request, rendezvous_id):
+        try:
+            rendezvous = RendezVous.objects.get(id=rendezvous_id)
+        except RendezVous.DoesNotExist:
+            return Response({'error': 'Rendez-vous non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+
+        if rendezvous.status != 'en_attente':
+            return Response({'error': 'Le rendez-vous est déjà en cours ou terminé'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Assignation du laveur
+        laveur_id = request.data.get('laveur_id')
+        try:
+            laveur = UserProfile.objects.get(id=laveur_id, role='laveur')
+        except UserProfile.DoesNotExist:
+            return Response({'error': 'Laveur non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Mettre à jour le statut
+        rendezvous.set_en_cours()
+
+        return Response({'message': 'Laveur assigné avec succès'}, status=status.HTTP_200_OK)
+    
+class TerminerRendezVousView(APIView):
+
+    def post(self, request, rendezvous_id):
+        try:
+            rendezvous = RendezVous.objects.get(id=rendezvous_id)
+        except RendezVous.DoesNotExist:
+            return Response({'error': 'Rendez-vous non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+
+        if rendezvous.status != 'en_cours':
+            return Response({'error': 'Le rendez-vous n\'est pas en cours'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Mettre à jour le statut
+        rendezvous.set_terminer()
+
+        return Response({'message': 'Rendez-vous terminé avec succès'}, status=status.HTTP_200_OK)

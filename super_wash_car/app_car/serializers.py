@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Client, Service, RendezVous, Tarification
+from .models import Client, Service, RendezVous, Tarification, UserProfile
 from django.contrib.auth.models import User
 
 
@@ -18,19 +18,32 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         )
         user.set_password(validated_data['password'])
         user.save()
+        # le profil est créé automatiquement via le signal
         return user
+    
+class UserProfileSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = UserProfile
+        fields = ['role']
+
         
-# Serializer pour les clients
+class UserNestedSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email']
+
 class ClientSerializer(serializers.ModelSerializer):
+    user = UserNestedSerializer(read_only=True)
+
     class Meta:
         model = Client
-        fields = '__all__'
-
+        fields = ['id', 'points_fidelite', 'user']
 
 class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
-        fields = ['nom', 'description']  # Vous pouvez ajouter plus de champs si nécessaire
+        fields = ['id','nom', 'description']  # Vous pouvez ajouter plus de champs si nécessaire
 
 
 # Serializer pour les tarifications
@@ -48,7 +61,8 @@ class TarificationSerializer(serializers.ModelSerializer):
 # Serializer pour les rendez-vous
 class RendezVousSerializer(serializers.ModelSerializer):
     tarification = TarificationSerializer(read_only=True)
+    
 
     class Meta:
         model = RendezVous
-        fields = '__all__'
+        exclude = ['client']

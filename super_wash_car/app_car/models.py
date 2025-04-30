@@ -1,16 +1,25 @@
 from django.db import models
 from django.contrib.auth.models import User
 
+class UserProfile(models.Model):
+    ROLE_CHOICES = (
+        ('client', 'Client'),
+        ('laveur', 'Laveur'),
+        ('admin', 'Admin'),
+    )
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='client')
+
+    def __str__(self):
+        return f"{self.user.username} - {self.role}"
 
 
 class Client(models.Model):
-    nom = models.CharField(max_length=100)
-    email = models.EmailField(unique=True)
-    telephone = models.CharField(max_length=8,unique=True)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
     points_fidelite = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-        return self.nom
+        return self.user
 
 TYPE_VEHICULE_CHOICES = [
     ('voiture', 'Voiture'),
@@ -43,6 +52,17 @@ class RendezVous(models.Model):
     type_vehicule = models.CharField(max_length=50, choices=TYPE_VEHICULE_CHOICES, default='inconnu')
     rappel_envoye = models.BooleanField(default=False)
     tarification = models.ForeignKey(Tarification, on_delete=models.SET_NULL, null=True)
+    status = models.CharField(max_length=50, null=False, blank=False, default='en_attente')
 
     def __str__(self):
         return self.date
+    
+    def set_en_cours(self):
+        if self.status == 'en_attente':
+            self.status = 'en_cours'
+            self.save()
+
+    def set_terminer(self):
+        if self.status == 'en_cours':
+            self.status = 'termine'
+            self.save()
