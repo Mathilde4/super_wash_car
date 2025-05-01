@@ -61,8 +61,16 @@ class TarificationSerializer(serializers.ModelSerializer):
 # Serializer pour les rendez-vous
 class RendezVousSerializer(serializers.ModelSerializer):
     tarification = TarificationSerializer(read_only=True)
+    service = ServiceSerializer(read_only=True)
+    username = serializers.SerializerMethodField(read_only=True)
+
     
 
     class Meta:
         model = RendezVous
-        exclude = ['client']
+        fields = '__all__'  # ou liste tous les champs explicitement
+        read_only_fields = ['client', 'tarification', 'status', 'username']
+
+
+    def get_username(self, obj):
+        return obj.client.user.username

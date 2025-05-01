@@ -68,7 +68,7 @@ def login_view(request):
                 'username': user.username,
                 'email': user.email,
                 'role': role,
-            },
+            },   
             'token': token.key,
         }, status=status.HTTP_200_OK)
     else:
@@ -134,7 +134,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
         data = [
             {
-                'nom': client.nom,
+                'nom': client.user.username,
                 'points_fidelite': client.points_fidelite
             }
             for client in top_clients
@@ -231,7 +231,7 @@ class RendezVousViewSet(viewsets.ModelViewSet):
 
             creneaux_par_date[date_str].append({
                 'heure': heure,
-                'client': rdv.client.nom,
+                'client': rdv.client.user.username,
                 'service': rdv.service.nom,
                 'prix': rdv.tarification.prix if rdv.tarification else None
             })
@@ -281,7 +281,7 @@ def top_clients(request):
     clients = Client.objects.order_by('-points_fidelite')[:5]
     data = [
         {
-            'nom': client.nom,
+            'nom': client.user.username,
             'points_fidelite': client.points_fidelite
         }
         for client in clients
