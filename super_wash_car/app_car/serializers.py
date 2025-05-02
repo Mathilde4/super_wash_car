@@ -61,7 +61,7 @@ class TarificationSerializer(serializers.ModelSerializer):
 # Serializer pour les rendez-vous
 class RendezVousSerializer(serializers.ModelSerializer):
     tarification = TarificationSerializer(read_only=True)
-    service = ServiceSerializer(read_only=True)
+    service = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all())
     username = serializers.SerializerMethodField(read_only=True)
     laveur = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(userprofile__role='laveur'), required=False)
     
