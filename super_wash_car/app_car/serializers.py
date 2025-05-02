@@ -63,6 +63,8 @@ class RendezVousSerializer(serializers.ModelSerializer):
     tarification = TarificationSerializer(read_only=True)
     service = ServiceSerializer(read_only=True)
     username = serializers.SerializerMethodField(read_only=True)
+    laveur = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(userprofile__role='laveur'), required=False)
+    
 
     
 
@@ -74,3 +76,11 @@ class RendezVousSerializer(serializers.ModelSerializer):
 
     def get_username(self, obj):
         return obj.client.user.username
+    
+    def update(self, instance, validated_data):
+        laveur = validated_data.get('laveur', None)
+        if laveur:
+            instance.laveur = laveur
+            if instance.status == 'en_attente':
+                instance.status = 'en_cours'
+        return super().update(instance, validated_data)

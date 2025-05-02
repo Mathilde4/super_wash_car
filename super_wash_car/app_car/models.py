@@ -53,6 +53,7 @@ class RendezVous(models.Model):
     rappel_envoye = models.BooleanField(default=False)
     tarification = models.ForeignKey(Tarification, on_delete=models.SET_NULL, null=True)
     status = models.CharField(max_length=50, null=False, blank=False, default='en_attente')
+    laveur = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rendezvous_assignes')
 
     def __str__(self):
         return self.date
